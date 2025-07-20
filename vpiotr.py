@@ -2,7 +2,6 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import json
 import os
-import requests
 import smtplib
 from pypdf import PdfReader
 import gradio as gr
@@ -12,34 +11,25 @@ load_dotenv(override=True)
 
 def send_email(subject, body):
     msg = f"Subject: {subject}\n\n{body}"
+    print(msg)
     server = smtplib.SMTP(os.getenv("SMTP_SERVER"), os.getenv("SMTP_PORT"))
     server.starttls()
     server.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASSWORD"))
-    server.sendmail(os.getenv("SMTP__USER"), os.getenv("SMTP_RECIPIENT"), msg)
+    server.sendmail(os.getenv("SMTP_USER"), os.getenv("SMTP_RECIPIENT"), msg)
     server.quit()
-
-def push(text):
-    requests.post(
-        "https://api.pushover.net/1/messages.json",
-        data={
-            "token": os.getenv("PUSHOVER_TOKEN"),
-            "user": os.getenv("PUSHOVER_USER"),
-            "message": text,
-        }
-    )
 
 
 def record_user_details(email, name="Name not provided", notes="not provided"):
-    push(f"Recording {name} with email {email} and notes {notes}")
+    send_email(f"New user interested in being in touch: {name}", f"Email: {email}\nNotes: {notes}")
     return {"recorded": "ok"}
 
 def record_unknown_question(question):
-    push(f"Recording {question}")
+    send_email("New question", f"Question: {question}")
     return {"recorded": "ok"}
 
 record_user_details_json = {
     "name": "record_user_details",
-    "description": "Use this tool to record that a user is interested in being in touch and provided an email address",
+    "description": "Use this tool to record that a user is interested in being in touch or has additional questions and provided an email address",
     "parameters": {
         "type": "object",
         "properties": {
@@ -82,20 +72,26 @@ tools = [{"type": "function", "function": record_user_details_json},
         {"type": "function", "function": record_unknown_question_json}]
 
 
-class Me:
+class AboutMe:
 
     def __init__(self):
         self.openai = OpenAI()
-        self.name = "Ed Donner"
-        reader = PdfReader("about_me/linkedin.pdf")
-        self.linkedin = ""
-        for page in reader.pages:
-            text = page.extract_text()
-            if text:
-                self.linkedin += text
-        with open("aboutme/summary.txt", "r", encoding="utf-8") as f:
-            self.summary = f.read()
+        self.first_name = "Piotr"
+        self.last_name = "Kowalczyk"
+        self.about_me = {}
+        files= os.listdir("about_me")
 
+        for document in files:
+            if document.endswith(".pdf"):
+                reader = PdfReader(f"about_me/{document}")
+                text = ""
+                for page in reader.pages:
+                    text += page.extract_text()
+                self.about_me[document.split(".")[0]] = text
+                
+            if document.endswith(".txt"):
+                with open(f"about_me/{document}", "r", encoding="utf-8") as f:
+                    self.about_me[document.split(".")[0]] = f.read()
 
     def handle_tool_call(self, tool_calls):
         results = []
@@ -109,16 +105,19 @@ class Me:
         return results
     
     def system_prompt(self):
-        system_prompt = f"You are acting as {self.name}. You are answering questions on {self.name}'s website, \
-particularly questions related to {self.name}'s career, background, skills and experience. \
-Your responsibility is to represent {self.name} for interactions on the website as faithfully as possible. \
-You are given a summary of {self.name}'s background and LinkedIn profile which you can use to answer questions. \
+        system_prompt = f"You are acting as AI avatar of {self.first_name} {self.last_name} with name v{self.first_name}. You are answering questions on {self.first_name} {self.last_name}'s website, \
+particularly questions related to {self.first_name} {self.last_name}'s career, background, skills, experience and some private information. \
+Your responsibility is to represent {self.first_name} {self.last_name} for interactions on the website as faithfully as possible. \
+You are given a summary of {self.first_name} {self.last_name}'s background in couple of documentswhich you can use to answer questions. \
+You are also given a summary of {self.first_name} {self.last_name}'s private information which you can use to answer questions. If private information is not listed, please answer that this is private information. \
 Be professional and engaging, as if talking to a potential client or future employer who came across the website. \
 If you don't know the answer to any question, use your record_unknown_question tool to record the question that you couldn't answer, even if it's about something trivial or unrelated to career. \
+Also, you should mention that real {self.first_name} {self.last_name} may answer the question if the email address will be provided and record the e-mail with record_user_details tool. \
 If the user is engaging in discussion, try to steer them towards getting in touch via email; ask for their email and record it using your record_user_details tool. "
-
-        system_prompt += f"\n\n## Summary:\n{self.summary}\n\n## LinkedIn Profile:\n{self.linkedin}\n\n"
-        system_prompt += f"With this context, please chat with the user, always staying in character as {self.name}."
+        for information in self.about_me:
+            system_prompt += f"\n\n## {information}:\n{self.about_me[information]}\n\n"
+        system_prompt += f"With this context, please chat with the user, always staying in character as v{self.first_name} AI avatar of {self.first_name} {self.last_name}."
+        print(system_prompt)
         return system_prompt
     
     def chat(self, message, history):
@@ -138,6 +137,6 @@ If the user is engaging in discussion, try to steer them towards getting in touc
     
 
 if __name__ == "__main__":
-    me = Me()
-    gr.ChatInterface(me.chat, type="messages").launch()
+    about_me = AboutMe()
+    gr.ChatInterface(about_me.chat, type="messages").launch()
     
