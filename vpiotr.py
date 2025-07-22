@@ -12,7 +12,8 @@ from dotenv import load_dotenv            # Load environment variables from .env
 from openai import OpenAI                 # OpenAI API wrapper
 import json                               # JSON parsing for tool call arguments
 import os                                 # File system interaction
-import smtplib                            # Sending emails via SMTP
+# import smtplib                            # Sending emails via SMTP
+import requests
 import random                             # 
 from pypdf import PdfReader               # Reading content from PDF files
 import gradio as gr                       # Gradio for web UI
@@ -25,30 +26,41 @@ load_dotenv(override=True)
 
 # Function: Send Email
 # Sends email with provided subject and body using credentials from .env
-def send_email(subject, body):
-    msg = f"Subject: {subject}\n\n{body}"
-    print(msg)  # Optional: log email locally
-    server = smtplib.SMTP(os.getenv("SMTP_SERVER"), int(os.getenv("SMTP_PORT")))
-    server.starttls()
-    server.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASSWORD"))
-    server.sendmail(os.getenv("SMTP_USER"), os.getenv("SMTP_RECIPIENT"), msg)
-    server.quit()
+# def send_email(subject, body):
+#     msg = f"Subject: {subject}\n\n{body}"
+#     print(msg)  # Optional: log email locally
+#     server = smtplib.SMTP(os.getenv("SMTP_SERVER"), int(os.getenv("SMTP_PORT")))
+#     server.starttls()
+#     server.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASSWORD"))
+#     server.sendmail(os.getenv("SMTP_USER"), os.getenv("SMTP_RECIPIENT"), msg)
+#     server.quit()
 
+# For pushover
+
+pushover_user = os.getenv("PUSHOVER_USER")
+pushover_token = os.getenv("PUSHOVER_TOKEN")
+pushover_url = "https://api.pushover.net/1/messages.json"
+
+def push(message):
+    print(f"Push: {message}")
+    payload = {"user": pushover_user, "token": pushover_token, "message": message}
+    requests.post(pushover_url, data=payload)
 
 # Tool Function: record_user_details
 # Called by AI when email is collected from the user
 def record_user_details(conversation_id, email, name="Name not provided", notes="Not provided", details=""):
-    send_email(
-        f"New user provided e-mail address: {name} in conversation {conversation_id}",
-        f"Email: {email}\nNotes: {notes}\ndetails (PII removed): {details}"
-    )
+    # send_email(
+    #     f"New user provided e-mail address: {name} in conversation {conversation_id}",
+    #     f"Email: {email}\nNotes: {notes}\ndetails (PII removed): {details}"
+    # )
+    push(f"New user provided e-mail address: {name} in conversation {conversation_id}\nEmail: {email}\nNotes: {notes}\ndetails (PII removed): {details}")
     return {"recorded": "ok"}
 
 
 # Tool Function: record_details
 # Called by AI when no email is collected but a conversation details is needed
 def record_details(conversation_id, details, questions=""):
-    send_email(f"Details of chat in conversation {conversation_id}", f"Unanswered questions: {questions}\ndetails (PII removed): {details}")
+    push(f"Details of chat in conversation {conversation_id}\nUnanswered questions: {questions}\ndetails (PII removed): {details}")
     return {"recorded": "ok"}
 
 
