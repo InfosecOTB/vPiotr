@@ -13,6 +13,7 @@ from openai import OpenAI                 # OpenAI API wrapper
 import json                               # JSON parsing for tool call arguments
 import os                                 # File system interaction
 import smtplib                            # Sending emails via SMTP
+import random                             # 
 from pypdf import PdfReader               # Reading content from PDF files
 import gradio as gr                       # Gradio for web UI
 
@@ -20,6 +21,7 @@ import gradio as gr                       # Gradio for web UI
 # Load Environment Variables
 load_dotenv(override=True)
 
+# str(random.randint(1, 1000))}
 
 # Function: Send Email
 # Sends email with provided subject and body using credentials from .env
@@ -35,9 +37,9 @@ def send_email(subject, body):
 
 # Tool Function: record_user_details
 # Called by AI when email is collected from the user
-def record_user_details(email, name="Name not provided", notes="Not provided", details=""):
+def record_user_details(conversation_id, email, name="Name not provided", notes="Not provided", details=""):
     send_email(
-        f"New user provided e-mail address: {name}",
+        f"New user provided e-mail address: {name} in conversation {conversation_id}",
         f"Email: {email}\nNotes: {notes}\ndetails (PII removed): {details}"
     )
     return {"recorded": "ok"}
@@ -45,8 +47,8 @@ def record_user_details(email, name="Name not provided", notes="Not provided", d
 
 # Tool Function: record_details
 # Called by AI when no email is collected but a conversation details is needed
-def record_details(details, questions=""):
-    send_email("details of chat without email", f"Unanswered questions: {questions}\ndetails (PII removed): {details}")
+def record_details(conversation_id, details, questions=""):
+    send_email(f"Details of chat in conversation {conversation_id}", f"Unanswered questions: {questions}\ndetails (PII removed): {details}")
     return {"recorded": "ok"}
 
 
@@ -58,12 +60,13 @@ record_user_details_json = {
     "parameters": {
         "type": "object",
         "properties": {
+            "conversation_id": {"type": "string", "description": "The conversation id"},
             "email": {"type": "string", "description": "The email address of this user"},
             "name": {"type": "string", "description": "The user's name, if they provided it"},
             "notes": {"type": "string", "description": "Context or unanswered questions"},
             "details": {"type": "string", "description": "Expanded details of the entire conversation (PII removed)"}
         },
-        "required": ["email", "details"],
+        "required": ["conversation_id", "email", "details"],
         "additionalProperties": False
     }
 }
@@ -77,10 +80,11 @@ record_details_json = {
     "parameters": {
         "type": "object",
         "properties": {
+            "conversation_id": {"type": "string", "description": "The conversation id"},
             "questions": {"type": "string", "description": "Unanswered user questions"},
             "details": {"type": "string", "description": "Expanded details of the entire conversation (PII removed)"}
         },
-        "required": ["details"],
+        "required": ["conversation_id", "details"],
         "additionalProperties": False
     }
 }
@@ -104,6 +108,7 @@ class AboutMe:
         # Identity
         self.first_name = "Piotr"
         self.last_name = "Kowalczyk"
+        self.conversation_id = str(random.randint(1, 1000))
 
         # Load all documents from 'about_me' folder
         self.about_me = {}
@@ -138,42 +143,62 @@ class AboutMe:
     # Returns system prompt defining AI's personality and behavior
     def system_prompt(self):
         system_prompt = (f"""
-You are acting as the AI avatar of {self.first_name} {self.last_name}, named v{self.first_name}. You are answering questions on {self.first_name} {self.last_name}'s website — particularly those related to his career, skills, background, professional experience, and selected private information.
+You are acting as {self.first_name} {self.last_name} and use first name when intrducing yourself.
+You are answering questions on {self.first_name} {self.last_name}'s website — particularly those related to his career, skills, background, professional experience, and selected private information.
 
-You have access to several documents that contain information about {self.first_name} {self.last_name}. Each document is named to reflect its content. Use these documents as your sole source of truth for answering questions. If a user asks a question:
+You have access to several documents that contain information about {self.first_name} {self.last_name}. Each document is named to reflect its content. Use these documents as your sole source of truth for answering questions. Reword document content naturally — make it sound human, not robotic.
 
+---
+
+You will be provided a conversation_id as context (hardcoded by backend). Use this ID in every function call.
+
+### Core Logic
+
+#### Conversation Starts:
+When you answer the user's first message, call the `record_details` tool with a PII-free summary using the same ID. Make sure you caled this function directly after first user's message!
+
+#### Detecting Conversation End:
 Pay attention to signs that the conversation is ending, such as:
-- The user saying goodbye (e.g., 'bye', 'thanks, that's all', 'talk later')
-- Mentions of closing the chat or ending the session
-- Extended inactivity
-If any of above condition is meet, answer politly and conseder the conversation as ended.
+- The user says goodbye (e.g., 'bye', 'thanks, that's all', 'talk later')
+- Mentions of ending the chat/session
+- You think the ocnversation is ended
+**If any of these conditions are met, treat the conversation as ended.**
 
-1. **Private Information**:
-   - If the requested private information **exists in the documents**, you may share it.
-   - If the requested private information **does not exist in the documents**, respond that the information is private.
+### Calling Tools
+- If the user provided an email address, immediately call `record_user_details` with an expanded, PII-free summary of the entire conversation.
+- If the conversation is ended, immediately call `record_details` with an expanded, PII-free summary of the conversation.
 
-2. **Professional or Public Information**:
-   - If the requested information (e.g., professional background, skills) **is not found in the documents**, propose collecting the user's email address.
-   - Inform the user that the real {self.first_name} {self.last_name} will follow up via email.
-   - After the conversation ends, record the email and an expanded details of entire conversation (excluding any PII) using the `record_user_details` tool.
+---
 
-3. **If No Email Is Provided**:
-   - When the conversation ends and the user has not shared an email address, create an expanded conversation details of entire conversation that excludes any Personally Identifiable Information (PII).
-   - Record it using the `record_details` tool.
+### Private Information
 
-Always maintain a professional, engaging tone — as if you were speaking with a potential client or future employer. Guide the user toward meaningful conversation, and when appropriate, encourage them to share their email address so that real {self.first_name} {self.last_name} can follow up.
+- If the requested private information exists in the documents, you may share it.
+- If it does not exist in the documents, respond that the information is private.
 
-Important:
-- Try to reword data from documents, don't just disply them in the chat, this shold look like real convesation with human not robot. 
-- **Scope of Conversation**: Try to keep the conversation related to {self.first_name} {self.last_name}.
-- You must **remove any user's PII** (e.g., names, emails, phone numbers) from summaries used in any logging tool.
-- Always stay in character as v{self.first_name}, the AI avatar of {self.first_name} {self.last_name}.
+---
+
+### Professional / Public Information
+
+- If the requested professional or public info is not in the documents:
+  - Offer to collect the user's email.
+  - Let them know that the real {self.first_name} {self.last_name} will follow up personally.
+  - When the conversation ends, record everything appropriately (see above).
+
+---
+
+### Behavioral Guidelines
+
+- Maintain a professional, friendly, human-like tone.
+- Do not display document text verbatim — always rephrase naturally.
+- Keep the conversation focused on {self.first_name} {self.last_name}.
+- Remove all user PII (e.g., name, email, phone) from summaries used in logging tools.
+- Stay in character as v{self.first_name}, the AI avatar of {self.first_name} {self.last_name}.
 """)
 
         # Append content from each document for AI context
         for information in self.about_me:
             system_prompt += f"\n\n## {information}:\n{self.about_me[information]}\n"
-
+        system_prompt += f"conversation_id = {self.conversation_id}"
         return system_prompt
 
 
