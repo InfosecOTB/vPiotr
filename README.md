@@ -1,5 +1,5 @@
 ---
-title: about_me_conversation
+title: vPiotr
 app_file: vpiotr.py
 sdk: gradio
 sdk_version: 5.38.0
